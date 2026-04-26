@@ -18,6 +18,7 @@ const mongoose = require("mongoose");
 // =========================
 // CONFIG
 // =========================
+const PREFIX = ".";
 const LOG_CHANNEL_ID = "1498066281407053844";
 
 const ROLES = {
@@ -27,13 +28,14 @@ const ROLES = {
 };
 
 // =========================
-// CLIENT
+// CLIENT (FIXED INTENTS)
 // =========================
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent
+        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.GuildMembers
     ],
     partials: [Partials.Channel]
 });
@@ -45,6 +47,9 @@ mongoose.connect(process.env.MONGO_URI)
     .then(() => console.log("✅ MongoDB Connected"))
     .catch(err => console.log("❌ MongoDB Error:", err));
 
+// =========================
+// TICKET DB
+// =========================
 const ticketSchema = new mongoose.Schema({
     userId: String,
     type: String,
@@ -59,7 +64,7 @@ const Ticket = mongoose.model("Ticket", ticketSchema);
 // =========================
 // BOT STATE
 // =========================
-let botState = "online"; // online | maintenance | offline
+let botState = "online";
 const startTime = Date.now();
 
 // =========================
@@ -70,29 +75,30 @@ client.once(Events.ClientReady, () => {
 });
 
 // =========================
-// PREFIX
-// =========================
-const prefix = ".";
-
-// =========================
-// LOG FUNCTION
+// LOG SYSTEM
 // =========================
 async function sendLog(guild, embed) {
-    const channel = guild.channels.cache.get(LOG_CHANNEL_ID);
-    if (!channel) return;
-    channel.send({ embeds: [embed] }).catch(() => {});
+    const ch = guild.channels.cache.get(LOG_CHANNEL_ID);
+    if (!ch) return;
+    ch.send({ embeds: [embed] }).catch(() => {});
 }
 
 // =========================
-// MESSAGE COMMANDS
+// MESSAGE COMMANDS (FIXED)
 // =========================
 client.on(Events.MessageCreate, async (message) => {
-    if (!message.guild || message.author.bot) return;
 
-    const args = message.content.slice(prefix.length).trim().split(/ +/);
+    if (!message.guild || message.author.bot) return;
+    if (!message.content.startsWith(PREFIX)) return;
+
+    const args = message.content.slice(PREFIX.length).trim().split(/ +/);
     const cmd = args.shift()?.toLowerCase();
 
-    // 📊 STATUS
+    console.log("CMD:", cmd); // DEBUG
+
+    // =========================
+    // STATUS (LIVE)
+    // =========================
     if (cmd === "status") {
 
         const uptime = Math.floor((Date.now() - startTime) / 1000);
@@ -122,10 +128,12 @@ client.on(Events.MessageCreate, async (message) => {
             )
             .setTimestamp();
 
-        return message.reply({ embeds: [embed] });
+        return message.channel.send({ embeds: [embed] });
     }
 
-    // 🎟️ TICKET PANEL
+    // =========================
+    // TICKET PANEL (FIXED)
+    // =========================
     if (cmd === "ticketpanel") {
 
         const embed = new EmbedBuilder()
@@ -136,15 +144,36 @@ client.on(Events.MessageCreate, async (message) => {
         const menu = new StringSelectMenuBuilder()
             .setCustomId("ticket_select")
             .setPlaceholder("Select ticket type")
-            .addOptions(
+            .addOptions([
                 { label: "Nametag", value: "nametag" },
                 { label: "Whitelist", value: "whitelist" },
                 { label: "Help", value: "help" }
-            );
+            ]);
 
         return message.channel.send({
             embeds: [embed],
             components: [new ActionRowBuilder().addComponents(menu)]
+        });
+    }
+
+    // =========================
+    // ANNOUNCEMENT
+    // =========================
+    if (cmd === "announce") {
+
+        const text = args.join(" ");
+        if (!text) return message.reply("Provide a message.");
+
+        const embed = new EmbedBuilder()
+            .setTitle("Ryze Announcement")
+            .setDescription(text)
+            .setColor("DarkGreen")
+            .setTimestamp();
+
+        return message.channel.send({
+            content: "@everyone",
+            embeds: [embed],
+            allowedMentions: { parse: ["everyone"] }
         });
     }
 });
@@ -155,7 +184,7 @@ client.on(Events.MessageCreate, async (message) => {
 client.on(Events.InteractionCreate, async (i) => {
 
     // =========================
-    // MENU SELECT
+    // MENU
     // =========================
     if (i.isStringSelectMenu() && i.customId === "ticket_select") {
 
@@ -205,7 +234,7 @@ client.on(Events.InteractionCreate, async (i) => {
     }
 
     // =========================
-    // MODAL SUBMIT
+    // MODALS
     // =========================
     if (i.isModalSubmit()) {
 
@@ -247,41 +276,28 @@ client.on(Events.InteractionCreate, async (i) => {
             data
         });
 
-        // =========================
-        // EMBED
-        // =========================
         const embed = new EmbedBuilder()
             .setColor("Black")
-            .setTitle(`${type.toUpperCase()} Ticket Opened`)
+            .setTitle(`${type.toUpperCase()} Ticket`)
             .setDescription("A staff member will be with you shortly.")
-            .addFields({ name: "Details", value: JSON.stringify(data, null, 2) });
+            .addFields({ name: "Info", value: JSON.stringify(data, null, 2) });
 
         const mentions = `<@&${ROLES.support}> <@&${ROLES.nametag}> <@&${ROLES.headStaff}>`;
 
-        let extra = "";
-        if (type === "nametag") {
-            extra = "\n🔵 Buy here: https://www.roblox.com/game-pass/1810909296/Nametag";
-        }
-
         await channel.send({
-            content: `${mentions} <@${i.user.id}>${extra}`,
+            content: `${mentions} <@${i.user.id}>`,
             embeds: [embed]
         });
 
-        // =========================
-        // LOGS
-        // =========================
-        const log = new EmbedBuilder()
-            .setTitle("🎟️ Ticket Created")
+        // LOG
+        sendLog(i.guild, new EmbedBuilder()
+            .setTitle("Ticket Created")
             .setColor("Blue")
             .addFields(
                 { name: "User", value: `<@${i.user.id}>` },
-                { name: "Type", value: type },
-                { name: "Channel", value: `${channel.name}` }
+                { name: "Type", value: type }
             )
-            .setTimestamp();
-
-        sendLog(i.guild, log);
+        );
 
         return i.reply({ content: `Ticket created: ${channel}`, ephemeral: true });
     }
